@@ -1,7 +1,7 @@
-
 import pandas as pd
 import requests
 import time
+import utm  # pip install utm
 
 API_URL = "https://api.opentopodata.org/v1/srtm90m"
 
@@ -17,24 +17,35 @@ def get_elevation(lat, lon):
     else:
         return None
 
-def process_csv(input_csv, output_csv, delay=1):
+def process_csv(input_csv, output_csv, utm_zone_number=None, northern_hemisphere=True, delay=1):
     df = pd.read_csv(input_csv)
-    if not {'latitude', 'longitude'}.issubset(df.columns):
-        raise ValueError("O arquivo CSV precisa conter as colunas 'latitude' e 'longitude'.")
+    if not {'Node', 'X-Coord', 'Y-Coord'}.issubset(df.columns):
+        raise ValueError("O CSV deve conter as colunas 'Node', 'X-Coord' e 'Y-Coord'.")
 
-    print("Consultando elevações...")
-    elevations = []
+    print("Convertendo UTM para latitude/longitude e consultando elevações...")
+    results = []
+
     for index, row in df.iterrows():
-        elevation = get_elevation(row['latitude'], row['longitude'])
-        elevations.append(elevation)
-        print(f"{index+1}/{len(df)}: ({row['latitude']}, {row['longitude']}) -> {elevation} m")
-        time.sleep(delay)  # Espera para evitar limite da API
+        try:
+            lat, lon = utm.to_latlon(
+                row['X-Coord'], row['Y-Coord'],
+                zone_number=utm_zone_number,
+                northern=northern_hemisphere
+            )
+        except Exception as e:
+            print(f"Erro ao converter UTM para o ponto {row['Node']}: {e}")
+            lat, lon = None, None
 
-    df['elevation'] = elevations
-    df.to_csv(output_csv, index=False)
+        elevation = get_elevation(lat, lon) if lat is not None and lon is not None else None
+        results.append({'Node': row['Node'], 'elevacao': elevation})
+        print(f"{index+1}/{len(df)}: Node {row['Node']} -> elevação {elevation} m")
+        time.sleep(delay)
+
+    pd.DataFrame(results).to_csv(output_csv, index=False)
     print(f"Arquivo salvo como: {output_csv}")
 
 if __name__ == "__main__":
-    input_csv = "coordenadas.csv"
-    output_csv = "coordenadas_com_elevacao.csv"
-    process_csv(input_csv, output_csv)
+    input_csv = "coordenadas_utm.csv"
+    output_csv = "pontos_com_elevacao.csv"
+    # Exemplo: zona 22 (para Rio Grande do Sul), hemisfério sul
+    process_csv(input_csv, output_csv, utm_zone_number=22, northern_hemisphere=False)
